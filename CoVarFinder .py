@@ -1,12 +1,10 @@
 #####################################################
 #####################################################
-##												   ##
+##						   ##
 ##	 HERE LIES THE MAGNIFICENT CODE WHICH 	   ##
-##		ASSIGNS SARS VARIANTS TO BAM FILES		 ##
-##		WRITTEN ENTIRELY BY MARIA MALLIAROU		##
-##	   	Genius, not a billionaire,				 ##
-##			playgirl, philanthropist.			   ##
-##												 ##
+##        ASSIGNS SARS VARIANTS TO BAM FILES	   ##
+##	  WRITTEN ENTIRELY BY MARIA MALLIAROU	   ##
+##	  					   ##
 #####################################################
 #####################################################
 
@@ -30,9 +28,17 @@ try:
 except ModuleNotFoundError:
     install(biopython)
 import re
+import argparse
 
 
 #--------------Functions-----------------------------
+def preprocess_file(bam, ref, path):
+    filename = bam.split("/")[-1][0:-4] if len(bam.split("/")) > 1 else bam[0:-4]
+    
+    os.system("freebayes -f {} -F 0.1 --pooled-continuous {} > {}/{}_freebayes.vcf".format(ref, bam , path, filename))
+    os.system("sed 's/2019-nCoV/NC_045512.2/g' {}/{}_freebayes.vcf > {}/{}_freebayes_sed.vcf".format(path, filename, path, filename))
+    os.system("java -jar snpEff/snpEff.jar ann NC_045512.2 {}/{}_freebayes_sed.vcf > {}/{}_snpEff.vcf".format(path, filename, path, filename))
+    return "{}/{}_snpEff.vcf".format(path, filename)
 
 def install(package):
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
@@ -140,7 +146,6 @@ def all_mutations(my_file):     ################################################
     return all_muts
     
     
-    
 def gene_calling(vcf_file):
     vcf_table = read_vcf(vcf_file)
     mutated_genes = []
@@ -148,8 +153,7 @@ def gene_calling(vcf_file):
         'ORF1a':'266-13468', 'ORF1b':'13465-21555', 'S':'21563-25384', 'ORF3a':'25393-26220', 
         'E':'26245-26472', 'M':'26523-27191', 'ORF6':'27202-27387', 'ORF7a':'27394-27759', 
         'ORF7b':'27756-27887', 'N':'28274-29533', 'ORF10':'29558-29674', 'ORF8':'27894-28259'
-        }
-        
+        }   
     for i in vcf_table.index:
         #print(vcf_table.loc[i])
         for gene in pos.keys():
@@ -157,9 +161,6 @@ def gene_calling(vcf_file):
                 #print( vcf_table.loc[i]["INFO"].split("|")[9])
                 mutated_genes.append("{}:{}".format(gene, vcf_table.loc[i]["INFO"].split("|")[9][2:]) )  
     return mutated_genes
-
-
-    
 
 
 def substitution(mutation, sequence_dict):
@@ -208,22 +209,19 @@ def insertion(mutation, sequence_dict):
     before = translate(sequence_dict[mutation[0]][pos -1 : pos +3])
     after = translate(temp_seq[pos -1 : pos +3])
     return gene + ":" +before + str(int((pos+2)/3)) + after
-    #return "ORF shift"
+    #return gene + ":" +before + str(int((pos+2)/3)) + "ORF shift"
 
-def multiple_deletion(mutation, sequence_dict):
+def multiple_deletion(mutation, sequence_dict):   ###########################this needs fixing 
     site = re.findall(r'(\w+)_(\w+)del([ATGC+])', mutation[1])
     gene = mutation[0]
     pos1 = triplet_position(site[0][0])
     pos2 = triplet_position(site[0][1])
     #assert(site[0][2] == sequence_dict[gene][int(site[0][0]) -1 :int(site[0][1])])
     #temp_seq = sequence_dict[gene][0:int(site[0][0])-1] + sequence_dict[gene][int(site[0][0]): ]
-  
     before = translate(sequence_dict[mutation[0]][pos1 -1 : pos2 +3])
-    #after = translate(temp_seq[pos -1 : pos +3])
-    
-    #return gene + ":" +before + str(int((pos+2)/3)) + after
+
     return gene + ":" +before[0] + str(int((pos1+2)/3))+ "_" +  before[-1] + str(int((pos2+2)/3)) + "del"
-    #return "ORF shift"
+    #return gene + ":" + "ORF shift"
 
 def mut_translator(mutation, sequence_dict):
     mut_list = []
@@ -240,36 +238,139 @@ def mut_translator(mutation, sequence_dict):
             mut_list.append(insertion(info, sequence_dict))
         elif re.search(pattern="[0-9]+_[0-9]+del[ATGC]+$", string=info[1]):
             mut_list.append(multiple_deletion(info, sequence_dict))
-            print(multiple_deletion(info, sequence_dict))
-        
-        
+            #print(multiple_deletion(info, sequence_dict))
+       
         else:
-            print(info)
+            pass
+    return mut_list
             
        
+def unique_mutations1(sample_muts, all_muts):
+    unique_mutations = {}
+    for sm in sample_mutations:
+        if sm in all_muts and len(all_muts[sm]) == 1 and len(all_muts[sm][0]) > 1 :
+            unique_mutations[sm] = all_mutas[sm]
+    return 
+
+
+def get_report(path ,filename, uni, shared, no):
+    #print(filename, path)
+    with open("{}/{}_report.txt".format(path, filename), "w") as f:
+        f.write("Final report of sample {}".format(filename) + "\n")
+        f.write("Unique mutations found in this sample:" + "\n")
+        for i in uni:
+            f.write(i+ ":" + " ".join(uni[i])  + "\n")
+        f.write("Shared mutations found in this sample:" + "\n")
+        for k in shared:
+            f.write(k + ":" + " ".join(shared[k]) + "\n")
+        f.write("The folllowing mutations are not reported in our database" + "\n")
+        for l in no:
+            f.write(l + "\n")
         
-        
 
-######################################################
+def core_function(vcf, genes, total_mutations, work) :
 
-total_mutations = all_mutations("all_mutations.txt")  ###### get all of the mutations reported manually
+    muts = gene_calling(vcf)       #######   this file in order to be correct needs preproccecing with varCalling from freebayes, change ref name (from 2019-nCoV to NC_045512.2 and genomic mutation indentification from snpEff)     
+    sample_mutations = mut_translator(muts,genes)
+    
+    unique_mutations = {}
+    shared_mutations = {}
+    no_hit = []
+    for sm in sample_mutations:
+        if sm in total_mutations and len(total_mutations[sm]) == 1 and len(total_mutations[sm][0]) > 1 :
+            unique_mutations[sm] = total_mutations[sm]
+        elif sm in total_mutations and len(total_mutations[sm]) > 1 :
+            shared_mutations[sm] = total_mutations[sm]
+        else:
+            no_hit.append(sm)
+    sample_name = vcf.split("/")[-1][0:-4] if len(vcf.split("/")) > 1 else vcf[0:-4]
+    print(work)
+    os.system("mkdir {}/results".format(work))
+    get_report( "{}/results".format(work) , sample_name ,unique_mutations, shared_mutations, no_hit)
 
-genes = { i.split(":")[0] : str(f2dict("ncbi_dataset/data/gene.fna")[i].seq) for i in f2dict("ncbi_dataset/data/gene.fna")}  #####get correct positions with corresponding sequence of all SARS-COV-2 genes
+    unique_variants = list(set(sum(unique_mutations.values(), [])))
 
-muts = gene_calling("vcf_results/Sample1_freebayes_ann.vcf")       #######   this file in order to be correct needs preproccecing with varCalling from freebayes, change ref name (from 2019-nCoV to NC_045512.2 and genomic mutation indentification from snpEff)
-
-
-sample_mutations = mut_translator(muts,genes)
-
-unique_mutations = {}
-shared_mutations = {}
-no_hit = {}
-for sm in sample_mutations:
-    if sm in all_mutations and len(all_mutations[sm]) == 1 and len(all_mutations[sm][0]) > 1 :
-        unique_mutations[sm] = all_mutations[sm]
-    elif sm in all_mutations and len(all_mutations[sm]) > 1 :
-        shared_mutations[sm] = all_mutations[sm]
+    if len(unique_variants) == 1 :
+        u_counter = 0 
+        s_counter = 0
+        for mvs in shared_mutations:
+            if unique_variants[0] in shared_mutations[mvs]:
+                u_counter += 1
+            else:   ##### Unfortunately BA.2 does not have unique mutations so check if its in the list which the other variants is not
+                if "BA.2" in shared_mutations[mvs]:
+                    s_counter += 1
+                else:
+                    print(shared_mutations[mvs])
+        if u_counter == len(shared_mutations) :
+            print("Found unique mutations of Variant {}".format(unique_variants[0]))
+        elif u_counter + s_counter == len(shared_mutations) :
+            print("Found unique mutations of Variant {} and BA.2".format(unique_variants[0]))  
     else:
-        no_hit[sm] = sm
+        u_counter = 0 
+        s_counter = 0   
+        for mvs in shared_mutations:
+            if not set(unique_variants).isdisjoint(set(shared_mutations[mvs])):
+                u_counter += 1
+            elif set(unique_variants).isdisjoint(set(shared_mutations[mvs])) and "BA.2" in shared_mutations[mvs] :
+                s_counter += 1
+        if u_counter == len(shared_mutations) :
+            print("Found unique mutations of Variant {}".format(",".join(unique_variants)))
+        elif u_counter + s_counter == len(shared_mutations) :
+            print("Found unique mutations of Variant {} and BA.2".format(",".join(unique_variants)))
+    
+
+##################### ------------your arguments-----------------------
+parser = argparse.ArgumentParser(description='Wanna derive SARS-COV-2 variants from your .bam or .vcf file?This is the code for you!',  epilog = "author: Maria Malliarou <maria.malliarou.ger@gmail.com> v1.1" )
+
+parser.add_argument('--input_data',  type = str, required = True, help = "Please provide your .vcf / .bam file or respective direcories for multiple recognision.If you select .bam you also need to give argument --preprocess as True" )  ###θα παίρνει ένα ή πολλα vcf αρχείο
+###parser.add_argument('--action')  #
+parser.add_argument('--preprocess',default  = False, type = bool, help = "If select True, don't provide vcf but your initial .bam file which is trimmned, sorted and SARS-COV-2 aligned")  ###
+#parser.add_argument('--bam',  type = str, help = "Please provide your bam file or vcf direcory for multiple recognision if you have selected preprocess True")  ###θα παίρνει ένα ή πολλα vcf αρχείο
+parser.add_argument('--reference',  type = str, help = "Please provide your reference fasta file used if you choose preprocess") 
+parser.add_argument('--alignment_name', nargs = 1, default  = "2019-nCoV")
+parser.add_argument('--report', default = True, type = bool, help = "The name of the report" )
+
+args = parser.parse_args()
+
+
+######################-----------Parse database files -------------------
+database = all_mutations("all_mutations.txt")  ###### get all of the mutations reported manually
+gene_sequence = { i.split(":")[0] : str(f2dict("ncbi_dataset/data/gene.fna")[i].seq) for i in f2dict("ncbi_dataset/data/gene.fna")}  #####get correct positions with corresponding sequence of all SARS-COV-2 genes
+
+######################-----------Core Code-------------------------------
+
+if os.path.isfile(args.input_data):
+    sample = args.input_data.split("/")[-1][0:-4] if len(args.input_data.split("/")) > 1 else args.input_data[0:-4]
+    os.system("mkdir CoVarCaller_{}_results".format(sample))
+    if args.preprocess == True:
+        os.system("mkdir CoVarCaller_{}_results/vcf_files".format(sample))
+        core_function(preprocess_file(args.bam, args.reference), gene_sequence, database, "CoVarCaller_{}_results".format(sample) )
+    else:
+        core_function(args.input_data, gene_sequence, database, "CoVarCaller_{}_results".format(sample) )
         
-print(unique_mutations)
+elif os.path.isdir(args.input_data):
+    files = os.listdir(args.input_data)
+    files = [q for q in files if q.endswith(".bam")]
+    #print(files)
+    os.system("mkdir {}all_results".format(args.input_data))
+    path = "{}all_results".format(args.input_data)
+
+    for file in files:
+        print("Processing file {}".format(file) )
+        sample = file.split("/")[-1][0:-4] if len(file.split("/")) > 1 else file[0:-4]
+        os.system("mkdir {}/CoVarCaller_{}_results".format(path ,sample))
+        if args.preprocess == True:
+            
+            os.system("mkdir {}/CoVarCaller_{}_results/vcf_results".format(path , sample))
+            new_vcf = preprocess_file("{}/{}".format(args.input_data,file), args.reference, "{}/CoVarCaller_{}_results/vcf_results".format(path , sample))
+            print(new_vcf)
+            core_function( new_vcf, gene_sequence, database, "{}/CoVarCaller_{}_results".format(path,sample) )
+
+        else:
+            core_function("{}/{}".format(path,file), gene_sequence, database, "{}/CoVarCaller_{}_results".format(path,sample) )
+
+
+
+
+
+ 
