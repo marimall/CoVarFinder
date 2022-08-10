@@ -1,4 +1,6 @@
 # CoVarFinder
+You have sequenced SARS CoV 2 samples and you want to know which are variants are in your sample?Well, this is the code for you!
+All you need is an aligned .bam file, two installations and you are good to go!
 This title is under consideration! It's super basic but at the moment I can't think of anything else
 
 ## Prerequisites
