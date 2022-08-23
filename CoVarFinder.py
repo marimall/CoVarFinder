@@ -11,22 +11,25 @@
 #-------------Dependencies--------------------------
 
 ##check if installed and if not "freebayes", "java" and "have snpEff in directory" 
-
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
 #--------------Imports-------------------------------
 
-from subprocess import call
+import subprocess 
 import io
 import os
+import sys
 try:
     import pandas as pd
 except ModuleNotFoundError:
-    install(pandas) ###install 
+    install("pandas") ###install 
 import json
 try:
     from Bio import SeqIO
 except ModuleNotFoundError:
-    install(biopython)
+    install("biopython")
+#from Bio import SeqIO
 import re
 import argparse
 
@@ -40,8 +43,7 @@ def preprocess_file(bam, ref, path):
     os.system("java -jar snpEff/snpEff.jar ann NC_045512.2 {}/{}_freebayes_sed.vcf > {}/{}_snpEff.vcf".format(path, filename, path, filename))
     return "{}/{}_snpEff.vcf".format(path, filename)
 
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
 
 def f2dict (input_fasta):
 	'''
@@ -135,17 +137,36 @@ def triplet_position(pos):
         return int(int(pos)-1)
         
 
-def all_mutations(my_file):     
-    with open(my_file, "r") as f:
-        lines = [line.strip("\n") for line in f]
+def all_mutations(path):     #####################################################3   this needs better files
+    files = os.listdir(path)
+    variants = [ file.split("_")[0] for file in files]
+    os.chdir(path)
+    print(os.getcwd())
+    all_mutes = {}
+    for i in files:
+        with open(i, "r") as f:
+            lines = [line.strip("\n") for line in f]
+            for line in lines:
+                if line not in all_mutes:
+                    all_mutes[line] = [i.split("_")[0]]
+                else:
+                    all_mutes[line].append(i.split("_")[0])
 
-    all_muts = {}
-    for l in lines:
-        if len(l.split(":")) == 3 :
-            all_muts[":".join(l.split(":")[0:2])] =  l.split(":")[2].split(",")
-    return all_muts
-    
-    
+    return all_mutes
+
+def aa_change(mutation):
+    '''
+    filters synonymus mutations
+    '''
+    if re.search(pattern=".+:[A-Z][1-9]+[A-Z]", string=mutation):
+        subs = re.findall(r'.+:([\w])[1-9]+([\w])', mutation)
+        if subs[0][0] == subs[0][1]:
+            return False
+        else:
+            return True
+    return True
+        
+        
 def gene_calling(vcf_file):
     vcf_table = read_vcf(vcf_file)
     mutated_genes = []
@@ -160,6 +181,8 @@ def gene_calling(vcf_file):
             if int(vcf_table.loc[i]["POS"]) < int(pos[gene].split("-")[1]) and vcf_table.loc[i]["POS"] > int(pos[gene].split("-")[0]):
                 #print( vcf_table.loc[i]["INFO"].split("|")[9])
                 mutated_genes.append("{}:{}".format(gene, vcf_table.loc[i]["INFO"].split("|")[9][2:]) )  
+    
+    
     return mutated_genes
 
 
@@ -212,8 +235,6 @@ def insertion(mutation, sequence_dict):
     #return gene + ":" +before + str(int((pos+2)/3)) + "ORF shift"
 
 def multiple_deletion(mutation, sequence_dict):   ###########################this needs fixing 
-    print(mutation)
- 
     site = re.findall(r'(\w+)_(\w+)del([ATGC]+)', mutation[1])
     gene = mutation[0]
     pos1 = triplet_position(site[0][0])
@@ -239,6 +260,7 @@ def multiple_deletion(mutation, sequence_dict):   ###########################thi
 
 
 def deletion_insertion(mutation, sequence_dict):  
+    #print(mutation)
     site = re.findall(r'(\w+)_(\w+)del([ATGC]+)ins([ATGC]+)', mutation[1])
     gene = mutation[0]
     pos1 = triplet_position(site[0][0])
@@ -250,6 +272,7 @@ def deletion_insertion(mutation, sequence_dict):
         before = translate(sequence_dict[mutation[0]][pos1 -1 : pos2 +3])
         after = translate(temp_seq[pos1 -1 : pos2 +3])
         aa_pos =list(range( int((pos1+2)/3) , int((pos2+2)/3) +1 ))
+        #print(aa_pos)
         for i in range(0,len(aa_pos)):
             to_return.append(gene + ":" + before[i] + str(aa_pos[i]) + after[i])
         return to_return
@@ -266,6 +289,7 @@ def deletion_insertion(mutation, sequence_dict):
         
         
         for i in range(0,len(aa_subs)):
+            #print(gene + ":" + before[i] + str(aa_pos[i]) + after[i])
             to_return.append(gene + ":" + before[i] + str(aa_pos[i]) + after[i])
         to_return.append( gene + ":" + before[len(aa_subs)] + str(aa_del[0]) + "_" + before[-1] + str(aa_del[-1]) + "del"  )
         return to_return
@@ -288,7 +312,6 @@ def mut_translator(mutation, sequence_dict):
             mut_list.append(insertion(info, sequence_dict))
         elif re.search(pattern="[0-9]+_[0-9]+del[ATGC]+$", string=info[1]):
             for d in multiple_deletion(info, sequence_dict):
-                print(d)
                 mut_list.append(d)
             #print(multiple_deletion(info, sequence_dict))
         elif re.search(pattern="[0-9]+_[0-9]+del[ATGC]+ins[ATGC]+$", string=info[1]):
@@ -297,7 +320,9 @@ def mut_translator(mutation, sequence_dict):
          
         else:
             pass
-    return mut_list
+    final = [q for q in mut_list if aa_change(q)]
+    return final
+            
        
 def unique_mutations1(sample_muts, all_muts):
     unique_mutations = {}
@@ -308,6 +333,7 @@ def unique_mutations1(sample_muts, all_muts):
 
 
 def get_report(path ,filename, uni, shared, no):
+    #print(filename, path)
     with open("{}/{}_report.txt".format(path, filename), "w") as f:
         f.write("Final report of sample {}".format(filename) + "\n")
         f.write("Unique mutations found in this sample:" + "\n")
@@ -325,7 +351,6 @@ def core_function(vcf, genes, total_mutations, work) :
 
     muts = gene_calling(vcf)       #######   this file in order to be correct needs preproccecing with varCalling from freebayes, change ref name (from 2019-nCoV to NC_045512.2 and genomic mutation indentification from snpEff)     
     sample_mutations = mut_translator(muts,genes)
-    
     unique_mutations = {}
     shared_mutations = {}
     no_hit = []
@@ -387,10 +412,17 @@ args = parser.parse_args()
 
 
 ######################-----------Parse database files -------------------
-database = all_mutations("all_mutations.txt")  ###### get all of the mutations reported manually
+
+database = all_mutations("variant_data")  ###### get all of the mutations reported manually
+os.chdir("../")
 gene_sequence = { i.split(":")[0] : str(f2dict("ncbi_dataset/data/gene.fna")[i].seq) for i in f2dict("ncbi_dataset/data/gene.fna")}  #####get correct positions with corresponding sequence of all SARS-COV-2 genes
 
 ######################-----------Core Code-------------------------------
+
+
+
+
+
 
 if os.path.isfile(args.input_data):
     sample = args.input_data.split("/")[-1][0:-4] if len(args.input_data.split("/")) > 1 else args.input_data[0:-4]
@@ -422,6 +454,14 @@ elif os.path.isdir(args.input_data):
         else:
             core_function("{}/{}".format(path,file), gene_sequence, database, "{}/CoVarCaller_{}_results".format(path,sample) )
 
+
+
+
+
+
+
+######
+ 
 
 
 
