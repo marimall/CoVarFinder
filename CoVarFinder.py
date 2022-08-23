@@ -135,7 +135,7 @@ def triplet_position(pos):
         return int(int(pos)-1)
         
 
-def all_mutations(my_file):     #####################################################3   this needs better files
+def all_mutations(my_file):     
     with open(my_file, "r") as f:
         lines = [line.strip("\n") for line in f]
 
@@ -212,16 +212,66 @@ def insertion(mutation, sequence_dict):
     #return gene + ":" +before + str(int((pos+2)/3)) + "ORF shift"
 
 def multiple_deletion(mutation, sequence_dict):   ###########################this needs fixing 
-    site = re.findall(r'(\w+)_(\w+)del([ATGC+])', mutation[1])
+    print(mutation)
+ 
+    site = re.findall(r'(\w+)_(\w+)del([ATGC]+)', mutation[1])
     gene = mutation[0]
     pos1 = triplet_position(site[0][0])
     pos2 = triplet_position(site[0][1])
-    #assert(site[0][2] == sequence_dict[gene][int(site[0][0]) -1 :int(site[0][1])])
+    assert(site[0][2] == sequence_dict[gene][int(site[0][0]) -1 :int(site[0][1])])
     #temp_seq = sequence_dict[gene][0:int(site[0][0])-1] + sequence_dict[gene][int(site[0][0]): ]
     before = translate(sequence_dict[mutation[0]][pos1 -1 : pos2 +3])
+    if len(site[0][2])% 3 != 0:
+        return [gene + ":" + str(int(pos1/3 +1)) + "ORF shift due to deletion"]
+    elif pos1 == int(site[0][0]):
+        if len(site[0][2]) == 3 :
+            return [gene + ":" +before[0] + str(int((pos1+2)/3))+ + "del"]
+        else:
+            return [  gene + ":" +before[0] + str(int((pos1+2)/3))+ "_" +  before[-1] + str(int((pos2+2)/3)) + "del"]
+    else:
+        temp_seq = sequence_dict[gene][0:int(site[0][0])-1] + sequence_dict[gene][int(site[0][1]): ]
+        if len(site[0][2]) == 3 :
+            
+            return [ gene + ":" +before[-1] + str(int((pos2+2)/3)) + translate(temp_seq[pos1-1:pos1+3]), gene + ":" +before[0] + str(int((pos1+2)/3) )+ "del"]
+        else:
+            return [ gene + ":" +before[-1] + str(int((pos2+2)/3)) + translate(temp_seq[pos1-1:pos1+3]), gene + ":" +before[0] + str(int((pos1+2)/3) )+ "_" +  before[-2] + str(int((pos2+2)/3)-1) + "del"]
 
-    return gene + ":" +before[0] + str(int((pos1+2)/3))+ "_" +  before[-1] + str(int((pos2+2)/3)) + "del"
-    #return gene + ":" + "ORF shift"
+
+
+def deletion_insertion(mutation, sequence_dict):  
+    site = re.findall(r'(\w+)_(\w+)del([ATGC]+)ins([ATGC]+)', mutation[1])
+    gene = mutation[0]
+    pos1 = triplet_position(site[0][0])
+    pos2 = triplet_position(site[0][1])
+    assert(site[0][2] == sequence_dict[gene][int(site[0][0]) -1 :int(site[0][1])])
+    to_return = []
+    if len(site[0][2]) == len(site[0][3]):
+        temp_seq = sequence_dict[gene][0:int(site[0][0])-1] + site[0][3]+sequence_dict[gene][int(site[0][1]): ]
+        before = translate(sequence_dict[mutation[0]][pos1 -1 : pos2 +3])
+        after = translate(temp_seq[pos1 -1 : pos2 +3])
+        aa_pos =list(range( int((pos1+2)/3) , int((pos2+2)/3) +1 ))
+        for i in range(0,len(aa_pos)):
+            to_return.append(gene + ":" + before[i] + str(aa_pos[i]) + after[i])
+        return to_return
+    elif len(site[0][2]) != len(site[0][3]) and (len(site[0][3]) - len(site[0][2])) % 3 == 0:
+
+        temp_seq = sequence_dict[gene][0:int(site[0][0])-1] + site[0][3] +sequence_dict[gene][int(site[0][1]): ]
+        shift = int((triplet_position(int(site[0][0]) + len(site[0][3])) + 2 ) /3)
+        before = translate(sequence_dict[mutation[0]][pos1 -1 : pos2 +3])
+        after = translate(temp_seq[pos1 -1 : pos2 +3])
+        aa_pos =list(range( int((pos1+2)/3) , int((pos2+2)/3) +1 ))
+        
+        aa_subs = [ q1 for q1 in aa_pos if q1<=shift ]
+        aa_del = [ q2 for q2 in aa_pos if q2>shift ]
+        
+        
+        for i in range(0,len(aa_subs)):
+            to_return.append(gene + ":" + before[i] + str(aa_pos[i]) + after[i])
+        to_return.append( gene + ":" + before[len(aa_subs)] + str(aa_del[0]) + "_" + before[-1] + str(aa_del[-1]) + "del"  )
+        return to_return
+    else:
+        return [gene + ":" + str(int(pos1/3 +1)) + "ORF shift"]
+    
 
 def mut_translator(mutation, sequence_dict):
     mut_list = []
@@ -237,13 +287,17 @@ def mut_translator(mutation, sequence_dict):
         elif re.search(pattern="[0-9]+_[0-9]+ins[ATGC]", string=info[1]):
             mut_list.append(insertion(info, sequence_dict))
         elif re.search(pattern="[0-9]+_[0-9]+del[ATGC]+$", string=info[1]):
-            mut_list.append(multiple_deletion(info, sequence_dict))
+            for d in multiple_deletion(info, sequence_dict):
+                print(d)
+                mut_list.append(d)
             #print(multiple_deletion(info, sequence_dict))
-       
+        elif re.search(pattern="[0-9]+_[0-9]+del[ATGC]+ins[ATGC]+$", string=info[1]):
+            for m in deletion_insertion(info, sequence_dict):
+                mut_list.append(m)
+         
         else:
             pass
     return mut_list
-            
        
 def unique_mutations1(sample_muts, all_muts):
     unique_mutations = {}
@@ -254,7 +308,6 @@ def unique_mutations1(sample_muts, all_muts):
 
 
 def get_report(path ,filename, uni, shared, no):
-    #print(filename, path)
     with open("{}/{}_report.txt".format(path, filename), "w") as f:
         f.write("Final report of sample {}".format(filename) + "\n")
         f.write("Unique mutations found in this sample:" + "\n")
